@@ -1,0 +1,450 @@
+---
+title: "Presidential Election 2016_fund contribution in New York State"
+output:
+  html_document: default
+  pdf_document: default
+---
+**2016 presidential election is most Controversial Elections in US History. Both candidates have been accused or critisized a lot. Despite all that, both parties could raise large fund and news always shown Clinton campaign fund was more than Trump. But Trump won the election. So I would like to analyse my state (NY) to see really how they raised huge amounts and if the contribution correlates to results**
+
+***
+The data (CSV) for fund contributions in NY is downloaded at http://www.fec.gov/disclosurep/PDownload.do
+The CSV file format is available at ftp://ftp.fec.gov/FEC/Presidential_Map/2016/DATA_DICTIONARIES/CONTRIBUTOR_FORMAT.txt
+***
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r, include=FALSE}
+library(plyr)
+#install.packages('ggplot2', dep = TRUE, repos="http://cran.rstudio.com/")
+library(ggplot2)
+library(gridExtra)
+library(plotly)
+library(reshape2)
+library(maps)
+library(mapdata)
+```
+
+```{r, include=FALSE}
+# parameter row.names=NULL added to avoid duplicate row.names error
+nyfund <- read.csv('P00000001-NY.csv', row.names = NULL)
+# refer this link for file format
+# ftp://ftp.fec.gov/FEC/Presidential_Map/2016/DATA_DICTIONARIES/CONTRIBUTOR_FORMAT.txt
+head(nyfund)
+```
+
+```{r, include=FALSE}
+#row.names=NULL ganerated first colum name as row.names and data shifted one column left
+# move column names left by 1 position
+colnames(nyfund) <- c(colnames(nyfund)[-1])
+# we have one column NA at the end (19th column), remove that
+# if I open CSV file in text file, I see ',' at the end of each record, that might be 
+# reason for column 'NA' at the end.
+#nyfund <- nyfund[,1:18]
+nyfund <- nyfund[ , !names(nyfund) %in% c(NA)]
+head(nyfund)
+```
+**Lets check numbers on toal fund**
+```{r}
+print(c("Total contribution fund in NY state in Millions:", round(sum(nyfund$contb_receipt_amt)/1000000, digits=0)))
+print (c("Quantitative Statistics on all contributions", summary(nyfund$contb_receipt_amt) ))
+```
+
+We have some refunds (-ve numbers) in fund. The mean is outside 3rd quartile, we have lot of outlier contributions, The maximum contribution is 12mm, thats very huge comparing to median or 3rd quartile. Lets look at total fund for each candidate.
+
+**Lets check total fund for each Candidate and statistics**
+```{r}
+tapply(nyfund$contb_receipt_amt, nyfund$cand_nm, sum)
+```
+
+***It seems we have lot of variations in contributions between candidates, lets look at visualizations to better understand contribtuions***
+
+```{r}
+#Lets compare the total fund for each candidate, ddply used to summarise data
+#round off total fund to nearest million and exclude candidates with <1 mm
+#We will use geom_text to disaply value of each bar on top of it
+#lets disable grid on background using theme
+ggplot(transform(subset(ddply(nyfund,"cand_nm", summarise, fund = round(sum(contb_receipt_amt)/1000000),
+                       digits=0), fund >= 1), cand_nm = reorder(cand_nm, -fund)), 
+       aes(x = cand_nm, y = fund)) + geom_bar(stat = "identity", fill='orange') +
+  geom_text(aes(label = fund), size = 3, hjust = 0.5, vjust = -1, position = "stack") +
+  theme_bw() + 
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5), 
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
+  labs(title="Candidates with fund 1mm or more ", x="Candidate",y="USD in millions") +
+  coord_cartesian(ylim=c(0,200))
+
+```
+
+It appears that, the donations for Clinton were too high compare to any other candidate. She has 145mm (appx) and the second comes Sanders with 8mm.
+
+Lets analyze donations for Clinton and Sanders by election type as both of these were key candidates from democrats in primary elections.
+
+***Number of Contributor by election type***
+```{r}
+#Please refer fec.gov link given at top to know what are election types
+table(nyfund$election_tp)
+```
+We have 869 entries with no value for election type, lets see how much fund comes out of these entries
+
+## Contributions with Election Type Blank
+
+```{r}
+ggplot(transform(ddply(subset(nyfund, election_tp == ''), "cand_nm", summarise, 
+                       fund = round(sum(contb_receipt_amt)/1000), digits=0), 
+                 cand_nm = reorder(cand_nm, -fund)),
+       aes(x = cand_nm, y = fund)) + geom_bar(stat = "identity", fill='orange') +
+  geom_text(aes(label = fund), size = 3, hjust = 0.5, vjust = -1, position = "stack") +
+  theme_bw() + 
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5), 
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
+  labs(x="Candidate",y="USD in 1000s") +
+   coord_cartesian(ylim=c(0,70000))
+```
+
+It appears that, Clinton has got 59mn out of these entries, this is 40% of her total fund, so we can???t ignore this to analyze data by election type. We could consider wrangling and deriving this based on donation date and primary election date etc, (donations might also be generic so candidate can use how ever they need) but let's not worry about data mining and just look at contribution types for this unclassified amount.
+
+Lets compare this fund by form type to see whether individuals or PACs are part of this amount.
+
+### Contribution source of Blank election type
+
+* SA17A (individual contributions), SB28A (refunds to individuals), and SA18 (transfers from other authorized committees) *
+
+```{r}
+#Create contibutor type based on form type
+nyfund$contbr_type <- revalue(nyfund$form_tp, 
+                              c("SA17A"="Individual", "SB28A"="Refunds_Ind", "SA18"="Committees"))
+
+#summarise data by cand name and contributor type for plotting
+ggplot(ddply(subset(nyfund, election_tp == ''), c("cand_nm","contbr_type"), summarise, 
+             fund = round(sum(contb_receipt_amt)/1000), digits=0), 
+       aes(x = cand_nm, y = fund, fill=contbr_type)) + geom_bar(stat = "identity") +
+  geom_text(aes(label = fund), size = 3, hjust = 0.5, vjust = -1, position = "stack") +
+  theme_bw() + 
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5), 
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
+  labs(x="Candidate",y="USD in 1000s") +
+  coord_cartesian(ylim=c(0,70000)) +
+  labs(fill="contributor type")
+
+```
+
+It is interesting that all unclassified amount contributed from Committees, so let's not worry about these, we will focus analysis on Individual contributions.
+
+```{r, include=FALSE}
+#We also have 3 entries for 2020 election (election_tp = P2020). Lets see what are those 3
+subset(nyfund, election_tp=='P2020')
+```
+```{r, eval=FALSE, include=FALSE}
+#All 3 entries are for candidate Lindsey Graham. We are not exploring this candidate; I do not worry #about these records.
+```
+
+**Compare data between Clinton and Sanders by election type (primary or general)**
+```{r}
+p1 <- ggplot(ddply(subset(nyfund, cand_nm %in% c("Clinton, Hillary Rodham", "Sanders, Bernard")), 
+             c("cand_nm","election_tp"), summarise, fund = sum(contb_receipt_amt)/1000), 
+       aes(x = cand_nm, y = fund, fill=election_tp)) + geom_bar(stat = "identity", position="dodge") +
+   theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5), 
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
+   labs(x="Condidate",y="USD in 1000s", title = "Fund by Election Type", fill="election") 
+
+#Compare Primary fund by contributor type
+p2 <- ggplot(ddply(subset(nyfund, cand_nm %in% c("Clinton, Hillary Rodham", "Sanders, Bernard") &
+                            election_tp == 'P2016'), 
+             c("cand_nm","contbr_type"), summarise, fund = sum(contb_receipt_amt)/1000), 
+       aes(x = cand_nm, y = fund, fill=contbr_type)) + geom_bar(stat = "identity", position="dodge") +
+   theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5), 
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
+  labs(x="Condidate",y="USD in 1000s", title = "Fund by Contributor type", fill="contributor type")
+
+grid.arrange(p1, p2, ncol=2)
+```
+
+It appears entire Bernie sanders fund contributed for primary it makes sense as he lost in primary. 
+
+If we check primary election result of NY, there is no huge difference for both candidates. (It is interesting that Sanders did not have any Committee fund, the 100% of his fund contributed by individuals and he pulled primary well)
+This is primary election result from NY Times.
+http://www.nytimes.com/elections/2016/results/primaries/new-york
+![NY Primary Results](C:/Users/Narasimha/Desktop/nyprimary.png)
+
+But if we look at primary election fund (P2016), there is huge difference. It is not necessariliy all NY primary fund is contributed before NY primary elections. So lets see the spread for the dates and also we will explore contibutors area to see if it matches with above map.
+
+## Explore Individual donations for Primary election
+
+```{r}
+#create month column to have value YYMM 
+nyfund$contb_month <- format(strptime(nyfund$contb_receipt_dt, format = "%d-%b-%y"), "%y%m")
+
+#Create subset by month and Cand_nm
+primary_fund <- ddply(subset(nyfund, election_tp %in% c("P2015", "P2016") & contbr_type=="Individual" &
+                          cand_nm %in% c("Clinton, Hillary Rodham", "Sanders, Bernard")), 
+                 c("contb_month","cand_nm"), summarise, fund = sum(contb_receipt_amt)/1000, 
+                 count=length(cand_nm))
+
+#create plot showing fund by month for both candidates
+p3 <- ggplot(data=primary_fund, aes(x=contb_month, y=fund, colour = cand_nm, group = cand_nm)) + 
+  geom_point()+ 
+  geom_line() +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) +
+  labs(x="",y="USD in 1000s") +
+  labs(colour="candidate")
+  
+#create plot showing contributors count by month for both candidates
+p4 <- ggplot(data=primary_fund, aes(x=contb_month, y=count, colour = cand_nm, group = cand_nm)) + 
+  geom_point()+ 
+  geom_line() +
+  labs(x="month (yymm)",y="USD in 1000s") +
+  labs(colour="candidate")
+
+grid.arrange(p3,p4,ncol=1)
+
+```
+
+It appears contribution for Sanders grown until NY primary elections (19-Apr), then started going down. By end of 2016-april, there was not huge difference between total delegates for Sanders and Clinton by NY Primary day (1373, 1662), hence there was no clear lead for anyone yet towards win as they need 2383 to win. But clinton camp kept raising fund in NY for next 3 motnhs but Sanders camp could not raise donations in NY after primary election, That means most of the Sanders contributors were mainly focusing NY primary result.
+
+But the number of contributors are high for Sanders, that tells me that most of the Sanders donors are middle clasee or lower middle class and most of them might have donated smaller amounts. 
+
+Most of the higher class people live in metro areas with white collor jobs.
+
+*Lets check top 10 occupations for both candidates in primary election fund and compare with entire state fund*
+```{r}
+occu_fund <- arrange(ddply(subset(nyfund, contbr_type=="Individual"), 
+                   c("contbr_occupation"), summarise, fund = sum(contb_receipt_amt)), desc(fund))
+
+hillary_occu_fund <- arrange(
+                        ddply(
+                           subset(nyfund, cand_nm == "Clinton, Hillary Rodham" & 
+                                    contbr_type=="Individual" & election_tp %in% c("P2015", "P2016")), 
+                        c("contbr_occupation"), summarise, fund = sum(contb_receipt_amt)),  
+                     desc(fund))
+
+sanders_occu_fund <- arrange(
+                        ddply(
+                           subset(nyfund, cand_nm == "Sanders, Bernard" & 
+                                    contbr_type=="Individual"), 
+                        c("contbr_occupation"), summarise, fund = sum(contb_receipt_amt)),  
+                     desc(fund))
+
+# if i create one dataframe sum of fund by cand_nm and occupation, we can use facet_wrap to split plots # by cand_nm, but reoder of x -axis can't be done for each plot. So bars does not show in desc order
+oc1 <- ggplot(transform(head(hillary_occu_fund,10), contbr_occupation = reorder(contbr_occupation, -fund)), 
+       aes(x = contbr_occupation, y = fund/1000)) + 
+  geom_bar(stat = "identity", position="dodge", fill='orange') +
+   theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) + 
+  labs(x="Occupation",y="USD in 1000s", title = "Hillary Clinton")
+
+oc2 <- ggplot(transform(head(sanders_occu_fund,10), contbr_occupation = reorder(contbr_occupation, -fund)), 
+       aes(x = contbr_occupation, y = fund/1000)) + 
+  geom_bar(stat = "identity", position="dodge", fill='orange') +
+   theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+  labs(x="Occupation",y="", title = "Bernard Sanders")
+
+oc3 <- ggplot(transform(head(occu_fund,10), contbr_occupation = reorder(contbr_occupation, -fund)), 
+       aes(x = contbr_occupation, y = fund/1000)) + 
+  geom_bar(stat = "identity", position="dodge", fill='orange') +
+   theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+    labs(x="Occupation",y="", title = "All Fund")
+
+grid.arrange(oc1,oc2,oc3, ncol=3)
+```
+
+If we compare Hillary and Sanders plot with earler plots by Contribution type and Election type, about 35% of fund donated by top 10 occupations. Both have contribution from 4 common occupations (Retired, Attorney, Physician, Not employed) in top 10. Sanders plot shows interesting point, 2mm of his 8mm fund donated by Unemployed, that shows people trusted him more for creating Jobs!
+Top 10 occupations are almost same between Hillary and All fund, thats mainly because Hillary has very large fund compare too all others combined.
+
+*The another interesting point is, why retired people are at the top of donations? Their life is completely dependent on policies like social security and medicaid, this might be one of the reason they are very interested on election outcome!*
+
+*Lets check top 10 occupations for Clinton and Trump*
+```{r}
+clinton_occu_fund_I <- arrange(
+                        ddply(
+                           subset(nyfund, cand_nm == "Clinton, Hillary Rodham" & 
+                                    contbr_type=="Individual"), 
+                        c("contbr_occupation"), summarise, fund = sum(contb_receipt_amt)),  
+                     desc(fund))
+
+trump_occu_fund_I <- arrange(
+                        ddply(
+                           subset(nyfund, cand_nm == "Trump, Donald J." & 
+                                    contbr_type=="Individual"), 
+                        c("contbr_occupation"), summarise, fund = sum(contb_receipt_amt)),  
+                     desc(fund))
+# 2 sets used instead of facet_wrap, so each plot shows bars in desc order.
+
+cl <- ggplot(transform(head(clinton_occu_fund_I,10), contbr_occupation = reorder(contbr_occupation, -fund)), 
+       aes(x = contbr_occupation, y = fund/1000)) + 
+  geom_bar(stat = "identity", position="dodge", fill='orange') +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+  labs(x="Occupation",y="USD in 1000s", title = "Hillary Clinton")
+
+tr <- ggplot(transform(head(trump_occu_fund_I,10), contbr_occupation = reorder(contbr_occupation, -fund)), 
+       aes(x = contbr_occupation, y = fund/1000)) + 
+  geom_bar(stat = "identity", position="dodge", fill='orange') +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) + 
+  labs(x="Occupation",y="", title = "Donald Trump")
+
+grid.arrange(cl,tr, ncol=2)
+```
+
+Again retired is on top for both of the candidates. **Real Estate owners are on top 10 for Donald Trump, but clinton does not have them on top, Trump made fortune in real estate, so they must have thought he creates real estate pro policies** *But this can not be confirmed as Clinton fund in number is too high. We will later look at more occupations for clinton!*
+
+**lets check Clinton data has REAL ESTATE occupation in next top contributors falling above 100k**
+```{r}
+ggplot(transform(subset(clinton_occu_fund_I,fund > 100000 & fund < 700000), 
+                 contbr_occupation = reorder(contbr_occupation, -fund)), 
+       aes(x = contbr_occupation, y = fund/1000, width=.5)) + 
+  geom_bar(stat = "identity", position="dodge", aes(fill = grepl("REAL ESTATE", contbr_occupation))) +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+  labs(x="Occupation",y="USD in 1000s", title = "Hillary Clinton") +
+  scale_fill_manual(breaks=c(" ", " "), values=c("grey","red"))
+```
+
+Look at this, Clinton does not have REAL ESTATE on top 10 occupations but has around 450k from Real estate, thats way higher than Trump contributions from REAL ESTATE (45k). Also plot shows another relevant occupation 'REAL ESTATE BROKER' with around 125K for Clinton. So if we believed real estate workers wanted Trump to win, it turned incorrect.
+
+**Lets see area wise plot for both parties**
+
+```{r}
+#Create area code from zip code (area code is first 3 digits of zip)
+nyfund$area_code <- substr(nyfund$contbr_zip, 1, 3)
+#Create Latitude and longitude for each area code.
+#Copy this data into CSV
+#https://gist.github.com/erichurst/7882666 
+zip_lat <- read.csv('zipLat.csv')
+#Convert Zip code to character with 5 length (so leading zeros are not truncated)
+zip_lat$ZIP <- sprintf("%05d", zip_lat$ZIP)
+#get 3 chracter zip code
+zip_lat$ZIP <- substr(zip_lat$ZIP, 1, 3)
+#Summarize by zip with average values of lat and lng for 3 character zip
+zip_sum <- ddply(zip_lat,  c("ZIP"), summarise, lat = mean(LAT), lng = mean(LNG)) 
+```
+
+```{r}
+#use maps from gpplot2 
+ny <- map_data("state", region="New York")
+#Lets analze all area codes start with 1, NY zip code starts with 1. 
+#I do not worry about little number of entries does not start with 1 in data.
+
+#add party indicator variable
+nyfund$party <- ifelse(nyfund$cand_nm %in% 
+                   c("Clinton, Hillary Rodham", "Sanders, Bernard", "O'Malley, Martin Joseph"), 
+                   'D', 'R')
+
+#summarize fund by party and area
+#We will plot for Individual and all contribution
+party_area_fund_a <- ddply(subset(nyfund, substr(area_code, 1, 1) == '1'), 
+                     c("party", "area_code"), summarise, fund = sum(contb_receipt_amt))
+party_area_fund_i <- ddply(subset(nyfund, contbr_type=="Individual" & substr(area_code, 1, 1) == '1'), 
+                           c("party", "area_code"), summarise, fund = sum(contb_receipt_amt))
+
+party_area_fund_a$lat <- zip_sum[match(party_area_fund_a$area_code,zip_sum$ZIP), 2]
+party_area_fund_a$lng <- zip_sum[match(party_area_fund_a$area_code,zip_sum$ZIP), 3]
+
+party_area_fund_i$lat <- zip_sum[match(party_area_fund_i$area_code,zip_sum$ZIP), 2]
+party_area_fund_i$lng <- zip_sum[match(party_area_fund_i$area_code,zip_sum$ZIP), 3]
+
+pi <- ggplot() + labs(title = "Individual Contributions") +
+  geom_polygon(data = ny, aes(x = long, y = lat, group = group)) +
+  # data has few records with zipcode outside new york state, do not include them.
+  geom_point(data=subset(party_area_fund_i, !(area_code %in% c('173', '198'))), aes(x=lng, y=lat, size=log10(fund), colour=party), 
+             position=position_jitter(w=.1), alpha=1/2) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        axis.title=element_blank(),
+        axis.text=element_blank(),
+        axis.ticks=element_blank()) +
+  scale_colour_manual(values=c('steelblue2', 'brown3')) +
+  labs(size="fund(USD)") +
+   scale_size(breaks = c(1,2,3,4,5,6,7,8),labels = c("10", "100", "1000", "10k","100k", "1mm", "10mm", "100mm"))
+
+pa <- ggplot() + labs(title = "All Contributions") +
+  geom_polygon(data = ny, aes(x = long, y = lat, group = group)) +
+  geom_point(data=subset(party_area_fund_a, !(area_code %in% c('173', '198'))), aes(x=lng, y=lat, size=log10(fund), colour=party), 
+             position=position_jitter(w=.1),  alpha=1/2) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        axis.title=element_blank(),
+        axis.text=element_blank(),
+        axis.ticks=element_blank()) +
+  scale_colour_manual(values=c('steelblue2', 'brown3')) +
+  labs(size="fund(USD)") +
+   scale_size(breaks = c(1,2,3,4,5,6,7,8),labels = c("10", "100", "1000", "10k","100k", "1mm", "10mm", "100mm"))
+
+grid.arrange(pi, pa, ncol=2)
+```
+
+**No difference between these 2 indcates, individual and commettes contributed from same area.**
+It shows larger points for Democratic party in all given areas. Here is the presidential result from NY Times. 
+**There is one interesting, if you compare dark red areas in result (republicans got more than 60% vote) to above map, all those areas do not have donations for any party! This might indicate, lower middle class (who can not donate) voted for Trump.** *We will confirm this more accurately when we plot fund by presidential Candidates for area*
+http://www.nytimes.com/elections/results/new-york
+![NY Presidential Results](C:/Users/Narasimha/Desktop/nyresult.png)
+
+**Lets compare area wise donation and result for Democratic Primary election**
+
+```{r}
+#summarize primary fund by area for democrat candidates
+area_p_fund <- ddply(subset(nyfund, election_tp %in% c("P2015", "P2016") &
+                            cand_nm %in% c("Clinton, Hillary Rodham", "Sanders, Bernard") &
+                            contbr_type=="Individual" & substr(area_code, 1, 1) == '1'), 
+                   c("cand_nm", "area_code"), summarise, fund = sum(contb_receipt_amt))
+#Create lat and lng from zip files
+area_p_fund$lat <- zip_sum[match(area_p_fund$area_code,zip_sum$ZIP), 2]
+area_p_fund$lng <- zip_sum[match(area_p_fund$area_code,zip_sum$ZIP), 3]
+
+#Lets plot log10 of fund as we have large variance in donations
+
+ggplot() + labs(title = "Democrats Primary election donations by Individuals") +
+  geom_polygon(data = ny, aes(x = long, y = lat, group = group)) +
+  geom_point(data=area_p_fund, aes(x=lng, y=lat, size=log10(fund), colour=cand_nm), 
+             position=position_jitter(w=.1)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        axis.title=element_blank(),
+        axis.text=element_blank(),
+        axis.ticks=element_blank()) +
+  labs(colour="candidate", size="fund (USD)") +
+   scale_size(breaks = c(1,2,3,4,5,6,7,8),labels = c("10", "100", "1000", "10k","100k", "1mm", "10mm", "100mm"))
+```
+
+If we compare this with primary election result map, It can show some similarities, **New York City area has large donations for Clinton and NY times shows there is large difference in vote percentage (Clinton higher).** Other areas Clinton has won are Buffalo, Rochester and Syracuse, donation map shows higher donations for Clinton in Buffalo, but other 2 areas does not show higher donations for Clinton, and these 3 areas are won by Clinton with slight margin of vote. **The rest of the map shows donations higher for Sanders and he has won that rest of NY.** Clinton has got large fund from metro areas (New York, Buffalo, Rochester). *You can see area names in NY Times result map given earlier.*
+
+**Lets compare area wise donation and result for presidential election candidates**
+**Clinton Vs Trump**
+```{r}
+area_g_fund <- ddply(subset(nyfund, election_tp == 'G2016' &
+                              cand_nm %in% c("Clinton, Hillary Rodham", "Trump, Donald J.") &
+                              contbr_type=="Individual" & substr(area_code, 1, 1) == '1'), 
+                     c("cand_nm", "area_code"), summarise, fund = sum(contb_receipt_amt))
+
+area_g_fund$lat <- zip_sum[match(area_g_fund$area_code,zip_sum$ZIP), 2]
+area_g_fund$lng <- zip_sum[match(area_g_fund$area_code,zip_sum$ZIP), 3]
+
+ggplot() + labs(title = "Individual Contributions to President Election") +
+  geom_polygon(data = ny, aes(x = long, y = lat, group = group)) +
+  geom_point(data=area_g_fund, aes(x=lng, y=lat, size=log10(fund), colour=cand_nm), 
+             position=position_jitter(w=.1),  alpha=1/2) +
+  scale_colour_manual(values=c('steelblue2', 'brown3')) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        axis.title=element_blank(),
+        axis.text=element_blank(),
+        axis.ticks=element_blank()) +
+   labs(colour="candidate", size="fund(USD)") +
+   scale_size(breaks = c(1,2,3,4,5,6,7,8),labels = c("10", "100", "1000", "10k","100k", "1mm", "10mm", "100mm"))
+```
+
+***This confirms what we assumed when we compared data between parties, all areas with donations have given high vote to Clinton or slight margin for trump. No donation areas are clearly won by Trump (60% vote).***
+
+# Reflection
+My target was mainly to check if election result can be forecasted based on fund donations, so I started exploring candidates who has donations and really made good in elections, there I finalized key candidates have larger donations compare to other candidates. I could really make some conclusion on result based on map plots. But I did not consider committee funds in final plots, If I had itemized data for committee funds, I could derrive more accurate conclusions, anyway candidates Sanders and Trump do not have Committee funds, so I can say we used enough data to show conclusions.
+
+I was also interested to explore donations and election results based on contributor occupation in more detailed, but occupations are very narrowed in data, so that becomes difficult, if we have occupations at high level, it would help us to create occupation categorical plots. Ofcourse we could map occupations in data to high level categories using any mapping data, but that involves some data wrangling.
+
+If I had geneder variable, it would have helped to explore if there was any gender bias in donations.
+
+Based on NY state data analysis and conclusions, I am very curious to run this analysis in future for all states and explore if there is any correlation between donation and election result by small region.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
